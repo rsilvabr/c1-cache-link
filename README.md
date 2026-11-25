@@ -10,7 +10,7 @@ Close Capture One before an `--apply` (the script refuses while it runs).
 
 ```
 python c1_cache_link.py status                          # what is linked where; writes the map
-python c1_cache_link.py link                            # G:\ caches -> C:\C1_Cache (moved)
+python c1_cache_link.py link                            # G:\ caches -> E:\C1_Cache (moved)
 python c1_cache_link.py link --discard                  # same, old thumbnails dropped (rebuilt on demand)
 python c1_cache_link.py move --to D:\C1_Cache           # new fast disk: caches moved, junctions repointed
 python c1_cache_link.py move --to D:\C1_Cache --discard # same without moving the thumbnails

@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 VERSION = "0.1.0"
 
 # ===== Settings (edit here; the command-line flags override them) ==========
-CACHE_ROOT = r"C:\C1_Cache"          # where the caches live (--to)
+CACHE_ROOT = r"E:\C1_Cache"         # where the caches live (--to)
 SOURCE_ROOTS = "G:\\"                # ';'-separated folders scanned (--source)
 CAPTUREONE_FOLDER_NAMES = "CaptureOne"   # ';'-separated, any case
 CACHE_FOLDER_NAME = "Cache"          # the folder inside CaptureOne that is linked
