@@ -763,6 +763,11 @@ def _print_summary(items, errors):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):     # a pipe on Windows is cp1252: never crash on a name
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(prog="c1_cache_link",
                                      description="Keep Capture One's Cache folders on a fast disk (NTFS junctions).")
     parser.add_argument("command", choices=("status", "link", "move", "unlink"))
