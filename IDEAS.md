@@ -1,7 +1,8 @@
 # Idea: route each Capture One cache to a disk by rules
 
-Status: idea only, nothing implemented. Written 2026-11-25 by the owner's
-request, to be discussed with Opus once the AI credit renews. The owner wants
+Status: implemented in 0.2.0 (rules file `c1_cache_rules.toml`, see README
+"Rules"). Written 2026-11-25 by the owner's request, to be discussed with Opus
+once the AI credit renews. The owner wants
 Opus to understand both the proposal and the WHY, then design the
 implementation.
 

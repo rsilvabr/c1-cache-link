@@ -1,0 +1,34 @@
+# c1_cache_rules.example.toml - copy to c1_cache_rules.toml (next to c1_cache_link.py)
+# and edit. Without c1_cache_rules.toml every cache goes to CACHE_ROOT (or --to).
+#
+# Precedence, per Capture One folder:
+#   1. a [[name]] rule whose folder name is above the CaptureOne folder
+#      (the closest one wins when several match);
+#   2. the [[path]] rule whose source is the longest folder above it;
+#   3. default.
+#
+# "none" = Capture One's own default: a real Cache folder beside the photos.
+# Paths must be absolute and start with the drive letter. Use single quotes
+# (literal strings) so the backslashes stay as they are.
+#
+# After editing, run:  python c1_cache_link.py link          (dry run: the PLAN)
+#                      python c1_cache_link.py link --apply  (Capture One closed)
+
+# Cache root for every folder that no rule below matches (or "none").
+default = 'E:\C1_Cache'
+
+# Everything below G:\2018 (any depth) -> the slow SSD.
+#[[path]]
+#source = 'G:\2018'
+#to = 'F:\C1_Cache'
+
+# A sub-folder of 2025 that gets its own cache: longer source wins over G:\2025.
+#[[path]]
+#source = 'G:\2025\Keepers'
+#to = 'E:\C1_Cache'
+
+# Folders named OUTTAKES, wherever they are, keep their cache beside the photos.
+# A name rule beats every path rule.
+#[[name]]
+#name = "OUTTAKES"
+#to = "none"

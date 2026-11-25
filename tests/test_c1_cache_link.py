@@ -15,6 +15,8 @@ HOSTILE = "250118_吾妻山公園_菜の花 Canola [FINAL] 50%"
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "MAP_COPY", str(tmp_path / "home" / ".c1_cache_map.tsv"))
     monkeypatch.setattr(c, "capture_one_running", lambda: "")
+    # a real rules file next to the script must never leak into the tests
+    monkeypatch.setattr(c, "RULES_FILE", str(tmp_path / "no_rules_here.toml"))
 
 
 def make_event(base, name=HOSTILE, photos=3):
@@ -246,3 +248,273 @@ def test_junction_across_drives(tmp_path):
         assert cache_hashes(cache) == thumbs
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+# --- rules: resolver (pure, no disk) -------------------------------------------
+
+def rules_of(default="D:\\Default", paths=(), names=()):
+    return c.Rules(default, list(paths), list(names))
+
+
+def c1(*folders):
+    return os.path.join(*folders, "CaptureOne")
+
+
+def test_resolve_default_when_no_rule():
+    assert c.resolve(rules_of(), c1("G:\\", "2025", "Ev")) == ("D:\\Default", "default")
+    assert c.resolve(rules_of(default=None), c1("G:\\", "2025", "Ev")) == (None, "default")
+
+
+def test_name_rule_deepest_match_wins():
+    r = rules_of(names=[("OUTTAKES", None), ("Selects", "E:\\Sel")])
+    assert c.resolve(r, c1("G:\\", "Selects", "Ev")) == ("E:\\Sel", "name Selects")
+    assert c.resolve(r, c1("G:\\", "OUTTAKES", "Ev")) == (None, "name OUTTAKES")
+    assert c.resolve(r, c1("G:\\", "Selects", "OUTTAKES", "Ev")) == (None, "name OUTTAKES")
+    assert c.resolve(r, c1("G:\\", "OUTTAKES", "Selects", "Ev")) == ("E:\\Sel", "name Selects")
+    assert c.resolve(r, c1("G:\\", "2025", "Ev", "OUTTAKES")) == (None, "name OUTTAKES")
+    assert c.resolve(r, c1("G:\\", "2025", "Ev")) == ("D:\\Default", "default")
+
+
+def test_name_rule_is_case_insensitive():
+    r = rules_of(names=[("OUTTAKES", None)])
+    assert c.resolve(r, c1("g:\\", "2025", "outtakes")) == (None, "name OUTTAKES")
+
+
+def test_name_rule_beats_path_rule():
+    r = rules_of(paths=[("G:\\2018", "F:\\C1")], names=[("OUTTAKES", None)])
+    assert c.resolve(r, c1("G:\\2018", "Ev", "OUTTAKES")) == (None, "name OUTTAKES")
+    assert c.resolve(r, c1("G:\\2018", "Ev")) == ("F:\\C1", "path G:\\2018")
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_longest_path_wins_whatever_the_order(order):
+    rules = [("G:\\2018", "F:\\C1"), ("G:\\2018\\Sub", "E:\\Fast")]
+    if order:
+        rules.reverse()
+    r = rules_of(paths=rules)
+    assert c.resolve(r, c1("G:\\2018", "Sub", "Ev")) == ("E:\\Fast", "path G:\\2018\\Sub")
+    assert c.resolve(r, c1("G:\\2018", "Other", "Ev")) == ("F:\\C1", "path G:\\2018")
+
+
+def test_path_prefix_is_whole_folder_names():
+    r = rules_of(paths=[("G:\\2018", "F:\\C1")])
+    assert c.resolve(r, c1("G:\\20180", "Ev")) == ("D:\\Default", "default")
+    assert c.resolve(r, c1("G:\\2018", "Ev")) == ("F:\\C1", "path G:\\2018")
+    assert c.resolve(r, c1("g:\\2018\\", "Ev")) == ("F:\\C1", "path G:\\2018")
+
+
+def test_root_source_matches_everything_on_its_drive():
+    r = rules_of(paths=[("G:\\", "F:\\C1")])
+    assert c.resolve(r, c1("G:\\", "2025", "Ev")) == ("F:\\C1", "path G:\\")
+    assert c.resolve(r, c1("E:\\", "2025", "Ev")) == ("D:\\Default", "default")
+
+
+def test_hostile_names_in_paths_and_names():
+    src = f"G:\\{HOSTILE}"
+    r = rules_of(paths=[(src, "F:\\C1 [x]")], names=[("FINAL [x] 50%", None)])
+    assert c.resolve(r, c1(src, "(2) 吾妻 [a]")) == ("F:\\C1 [x]", f"path {src}")
+    assert c.resolve(r, c1(src, "2025", "FINAL [x] 50%")) == (None, "name FINAL [x] 50%")
+
+
+# --- rules: loading and validation ---------------------------------------------
+
+VALID_RULES = """
+default = 'E:\\C1_Cache'
+[[path]]
+source = 'G:\\2018'
+to = 'F:\\C1_Cache'
+[[path]]
+source = 'G:\\2018\\Sub'
+to = 'none'
+[[name]]
+name = "OUTTAKES"
+to = "NONE"
+"""
+
+
+def write_text(path, text):
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def lit(value):
+    return "'none'" if value == "none" else f"'{value}'"
+
+
+def write_rules(path, default, paths=(), names=()):
+    lines = [f"default = {lit(default)}"]
+    for source, to in paths:
+        lines += ["[[path]]", f"source = '{source}'", f"to = {lit(to)}"]
+    for name, to in names:
+        lines += ["[[name]]", f'name = "{name}"', f"to = {lit(to)}"]
+    return write_text(path, "\n".join(lines) + "\n")
+
+
+def test_load_rules_valid(tmp_path):
+    rules = c.load_rules(write_text(tmp_path / "r.toml", VALID_RULES), "X:\\fallback")
+    assert rules.default == "E:\\C1_Cache"
+    assert rules.paths == [("G:\\2018", "F:\\C1_Cache"), ("G:\\2018\\Sub", None)]
+    assert rules.names == [("OUTTAKES", None)]
+
+
+def test_load_rules_default_falls_back(tmp_path):
+    rules = c.load_rules(write_text(tmp_path / "r.toml", "[[name]]\nname = 'X'\nto = 'none'\n"),
+                         "X:\\fallback")
+    assert rules.default == "X:\\fallback"
+
+
+@pytest.mark.parametrize("text, fragment", [
+    ("bogus = 1\n", "unknown key(s) bogus"),
+    ("[[path]]\nsource = 'G:\\\\2018'\nto = 'F:\\\\C1'\nextra = 1\n", "unknown key(s) extra"),
+    ("[[name]]\nname = 'A'\nto = 'none'\nwhere = 'x'\n", "unknown key(s) where"),
+    ("default = 'C1_Cache'\n", "not an absolute folder"),
+    ("default = '\\C1_Cache'\n", "not an absolute folder"),
+    ("[[path]]\nsource = 'G:\\\\2018'\nto = 'relative'\n", "not an absolute folder"),
+    ("[[path]]\nsource = 'none'\nto = 'F:\\\\C1'\n", "not an absolute folder"),
+    ("[[path]]\nsource = 'G:\\\\2018'\n", "missing 'to'"),
+    ("[[name]]\nname = ''\nto = 'none'\n", "must be a folder name"),
+    ("[[name]]\nname = 'OUT/TAKES'\nto = 'none'\n", "must be a folder name"),
+    ("[[name]]\nname = 'OUT:TAKES'\nto = 'none'\n", "must be a folder name"),
+    ("[[name]]\nname = 'A'\nto = 'none'\n[[name]]\nname = 'a'\nto = 'none'\n", "already used"),
+    ("[[path]]\nsource = 'G:\\\\2018'\nto = 'none'\n"
+     "[[path]]\nsource = 'g:\\\\2018\\\\'\nto = 'none'\n", "already used"),
+    ("default = \n", "not valid TOML"),
+    ("path = 'x'\n", "must be a list"),
+])
+def test_load_rules_reports_each_problem(tmp_path, text, fragment):
+    path = write_text(tmp_path / "bad.toml", text)
+    with pytest.raises(ValueError) as err:
+        c.load_rules(path, "X:\\fallback")
+    assert fragment in str(err.value)
+    assert path in str(err.value)                    # the message names the file
+
+
+def test_bad_rules_file_exits_2_without_traceback(tmp_path, capsys):
+    src = tmp_path / "G"
+    make_event(src)
+    bad = write_text(tmp_path / "bad.toml", "default = \n")
+    assert run("status", "--source", src, "--rules", bad) == 2
+    assert "Rules file error" in capsys.readouterr().out
+    assert run("link", "--source", src, "--rules", tmp_path / "missing.toml") == 2
+
+
+# --- rules: space per drive ----------------------------------------------------
+
+def fake_item(state, cache, nbytes, target=""):
+    return c.Item(os.path.dirname(cache), cache, state=state, target=target, nbytes=nbytes)
+
+
+def test_space_needs_are_counted_per_drive():
+    todo = [
+        (fake_item("real", "G:\\a\\CaptureOne\\Cache", 100), "link", "E:\\C1"),
+        (fake_item("linked", "G:\\b\\CaptureOne\\Cache", 50, "E:\\C1\\G\\b\\CaptureOne\\Cache"),
+         "unlink", None),
+        (fake_item("linked", "G:\\c\\CaptureOne\\Cache", 70, "F:\\old\\G\\c\\CaptureOne\\Cache"),
+         "move", "F:\\new"),
+        (fake_item("broken", "G:\\d\\CaptureOne\\Cache", 0, "F:\\gone\\G\\d\\CaptureOne\\Cache"),
+         "repair", "E:\\C1"),
+    ]
+    assert c.space_needs(todo, discard=False) == {"e:": 100, "g:": 50, "f:": 70}
+    assert c.space_needs(todo, discard=True) == {}
+
+
+def test_check_space_refuses_when_one_drive_is_short(monkeypatch, capsys):
+    monkeypatch.setattr(c, "free_bytes", lambda p: 10 ** 12 if p.lower().startswith("f") else 1000)
+    assert c.check_space({"e:": 1, "f:": 1}) is False
+    out = capsys.readouterr().out
+    assert "Space: E:" in out and "DOES NOT FIT" in out and "Space: F:" in out
+    assert c.check_space({"f:": 1}) is True
+
+
+# --- rules: end to end on tmp_path ---------------------------------------------
+
+def points_to(cache, root):
+    return c.is_link(cache) and c._same(c.link_target(str(cache)), c.mirror(str(root), str(cache)))
+
+
+def test_rules_route_each_cache_and_follow_changes(tmp_path, capsys):
+    src = tmp_path / "G"
+    A, B = tmp_path / "rootA", tmp_path / "rootB"
+    old_event = make_event(src / "2018", "180101 Old")
+    hostile = make_event(src / "2025")
+    outtakes = make_event(hostile, "OUTTAKES", photos=2)     # 2025/<hostile>/OUTTAKES
+    caches = {"old": old_event / "CaptureOne" / "Cache",
+              "hostile": hostile / "CaptureOne" / "Cache",
+              "outtakes": outtakes / "CaptureOne" / "Cache"}
+    hashes = {k: cache_hashes(v) for k, v in caches.items()}
+    settings = snapshot(src)
+    twenty25 = str(src / "2025")
+
+    rules = write_rules(tmp_path / "rules.toml", str(A), paths=[(twenty25, str(B))],
+                        names=[("OUTTAKES", "none")])
+    # dry run: nothing changes, no root is created
+    assert run("link", "--source", src, "--rules", rules) == 0
+    assert snapshot(src) == settings
+    assert not A.exists() and not B.exists()
+    assert "PLAN" in capsys.readouterr().out
+
+    # apply: each cache where its rule says; OUTTAKES stays beside the photos
+    assert run("link", "--source", src, "--rules", rules, "--apply") == 0
+    assert points_to(caches["old"], A)
+    assert points_to(caches["hostile"], B)
+    assert not c.is_link(caches["outtakes"]) and caches["outtakes"].is_dir()
+    assert snapshot(src) == settings
+    for key, cache in caches.items():
+        assert cache_hashes(cache) == hashes[key]
+    text = (A / c.MAP_FILE_NAME).read_text(encoding="utf-8")
+    assert "\tname OUTTAKES" in text and f"\tpath {twenty25}" in text
+
+    # rules changed: sub-folder -> A, OUTTAKES -> B
+    rules = write_rules(tmp_path / "rules.toml", str(A), paths=[(twenty25, str(A))],
+                        names=[("OUTTAKES", str(B))])
+    assert run("link", "--source", src, "--rules", rules, "--apply") == 0
+    assert points_to(caches["hostile"], A) and points_to(caches["old"], A)
+    assert points_to(caches["outtakes"], B)
+    assert not os.path.exists(c.mirror(str(B), str(caches["hostile"])))   # old copy gone
+    for key, cache in caches.items():
+        assert cache_hashes(cache) == hashes[key]
+
+    # a rule to "none": the cache comes back beside the photos
+    rules = write_rules(tmp_path / "rules.toml", str(A), paths=[(twenty25, "none")],
+                        names=[("OUTTAKES", str(B))])
+    assert run("link", "--source", src, "--rules", rules, "--apply") == 0
+    assert caches["hostile"].is_dir() and not c.is_link(caches["hostile"])
+    assert not os.path.exists(c.mirror(str(A), str(caches["hostile"])))
+    for key, cache in caches.items():
+        assert cache_hashes(cache) == hashes[key]
+    assert snapshot(src) == settings
+
+    # and a second run has nothing to do
+    capsys.readouterr()
+    assert run("link", "--source", src, "--rules", rules, "--apply") == 0
+    assert "Nothing to do." in capsys.readouterr().out
+
+
+def test_status_prints_plan_and_changes_nothing(tmp_path, capsys):
+    src = tmp_path / "G"
+    make_event(src / "2018")
+    rules = write_rules(tmp_path / "rules.toml", str(tmp_path / "rootA"))
+    before = snapshot(src, skip_cache=False)
+    assert run("status", "--source", src, "--rules", rules) == 0
+    out = capsys.readouterr().out
+    assert "PLAN" in out and "in place" in out
+    assert snapshot(src, skip_cache=False) == before
+    assert not (tmp_path / "rootA").exists()
+
+
+def test_move_with_rules_file_prints_the_note(tmp_path, capsys):
+    src = tmp_path / "G"
+    make_event(src)
+    rules = write_rules(tmp_path / "rules.toml", str(tmp_path / "rootA"))
+    assert run("move", "--source", src, "--to", tmp_path / "rootB", "--rules", rules) == 0
+    assert "a rules file is in use" in capsys.readouterr().out
+
+
+def test_rules_space_refusal_changes_nothing(tmp_path, monkeypatch):
+    src = tmp_path / "G"
+    event = make_event(src)
+    rules = write_rules(tmp_path / "rules.toml", str(tmp_path / "rootA"))
+    monkeypatch.setattr(c, "free_bytes", lambda path: 1000)
+    assert run("link", "--source", src, "--rules", rules, "--apply") == 2
+    assert not c.is_link(event / "CaptureOne" / "Cache")
+    assert run("link", "--source", src, "--rules", rules, "--discard", "--apply") == 0

@@ -20,8 +20,45 @@ python c1_cache_link.py unlink --discard                # junctions removed, emp
 ```
 
 `--source "G:\2025;G:\2026"` limits a run to some folders. Defaults
-(`CACHE_ROOT`, `SOURCE_ROOTS`, the margin, the folder names) are the settings
-at the top of the script.
+(`CACHE_ROOT`, `RULES_FILE`, `SOURCE_ROOTS`, the margin, the folder names) are
+the settings at the top of the script.
+
+## Rules
+
+Each Capture One folder can send its cache to a different place. Put the rules
+in `c1_cache_rules.toml` next to the script (or pass `--rules PATH`); start from
+`c1_cache_rules.example.toml`:
+
+```toml
+default = 'E:\C1_Cache'        # where every cache goes unless a rule says otherwise ("none" = beside the photos)
+
+[[path]]
+source = 'G:\2018'             # everything below G:\2018 ...
+to = 'F:\C1_Cache'             # ... goes to F:
+
+[[name]]
+name = "OUTTAKES"              # any folder called OUTTAKES, wherever it is ...
+to = "none"                    # ... keeps a real Cache beside its photos
+```
+
+- **Precedence**: a name rule beats every path rule; among path rules the
+  longest matching source wins (the order in the file does not matter);
+  otherwise the default. Among name rules the one closest to the `CaptureOne`
+  folder wins.
+- **"none"** (any case) means Capture One's own default: a real `Cache` folder
+  beside the photos, no junction.
+- **No rules file**: every cache goes to `CACHE_ROOT` (or `--to`), as before.
+  With a rules file, `--to` overrides its `default`.
+- **Changing rules**: edit the file and run `link`. `link` moves only the caches
+  whose target differs from the rules (a cache a rule now sends to "none" comes
+  back beside the photos). `move --to` ignores the rules; a note says so.
+- **Dry run first**: `link` (without `--apply`) prints a PLAN table: per
+  destination, how many folders are already in place and how many would be
+  linked, moved, repaired or unlinked, with the GB. `status` prints the same table.
+- **Space** is checked per drive: each drive needs its share plus
+  `SPACE_MARGIN_GB`.
+- A malformed rules file (unknown key, relative path, duplicate source or name,
+  bad TOML) is reported with its file name, and nothing changes.
 
 - **Space**: moving refuses before the first byte when the destination lacks
   the cache size plus `SPACE_MARGIN_GB`. `--discard` needs no space.
