@@ -1,81 +1,153 @@
-# c1-cache-link
+# c1-cache-link — Capture One caches on a fast disk
 
-Keeps Capture One's `Cache` folders (thumbnails `.cot`, previews `.cof`/`.cop`)
-on a fast disk while the edits (`CaptureOne\Settings*`, `.cos`/`.comask`) stay
-next to the photos. Each `...\CaptureOne\Cache` becomes an NTFS junction to
-`<cache root>\<drive>\<same path>`. Capture One sees an ordinary folder.
+Keeps Capture One's **`Cache` folders** (thumbnails `.cot`, previews `.cof`/`.cop`) on a fast SSD while the **edits stay next to the photos** on the big, slow disk. Each `...\CaptureOne\Cache` becomes an NTFS junction to the SSD; Capture One sees an ordinary folder and never knows. Rules decide which folders get the fast disk: by default all of them, but, for example, every `OUTTAKES` folder can keep its cache beside the photos.
 
-Nothing changes without `--apply`; every run first lists what it would do.
-Close Capture One before an `--apply` (the script refuses while it runs).
+**Current version: v0.2.0** (2026-11-26) · [What's new](#whats-new-in-v020) · Windows only · one Python file, no dependencies
+
+---
+
+## Why
+
+Capture One writes a `CaptureOne` folder beside every folder of photos it opens: `Settings*` holds your edits, `Cache` holds thumbnails and previews it can always rebuild. On a hard disk, browsing a big folder means reading thousands of small cache files from the slowest disk in the PC. Moving the photos to an SSD is expensive; moving only the cache costs a fraction of the space. In my library, 435 folders on an 18 TB disk have about 190 GB of cache.
+
+- **Browsing is fast** — the thumbnails and previews come from the SSD.
+- **Edits stay with the photos** — `Settings*` never moves, so a backup of the photo disk still holds every adjustment, and moving or renaming a folder keeps its edits.
+- **Nothing is lost if the SSD dies** — the cache is rebuilt by Capture One; one command recreates the junctions on a new disk.
+- **The SSD does not have to hold everything** — rules send rarely opened folders (outtakes, old years) elsewhere, or leave them untouched.
+
+---
+
+## Features
+
+- **Dry run by default** — every command first prints what it would do; nothing changes without `--apply`.
+- **Rules** — a default location, path rules (everything below `G:\2018` → another disk) and folder-name rules (`OUTTAKES` → beside the photos). One `link` reconciles every folder with the rules and moves only what differs.
+- **A plan before you commit** — per destination: folders already in place, and how many would be linked, moved, repaired or brought back, with the GB.
+- **Safe moves** — the cache is copied and checked before the old copy is deleted; an interrupted run is cleaned up by the next one; only a folder named `Cache` directly inside a `CaptureOne` folder is ever deleted.
+- **Space checked per disk** before the first byte is copied, with a margin.
+- **Refuses while Capture One runs.**
+- **A readable map** (`_c1_cache_map.tsv`) of every cache folder, where it lives and which rule chose it.
+- **Hostile paths** — Japanese names, `[ ]`, spaces, `%`, paths past 260 characters, junctions across drives.
+
+---
+
+## Install
+
+Windows 10/11, NTFS on both disks, **Python 3.11 or newer** (it reads the rules with the standard `tomllib`). Nothing else to install: download `c1_cache_link.py` and open the settings at its top:
+
+```python
+CACHE_ROOT = r"E:\C1_Cache"   # the fast disk (--to)
+SOURCE_ROOTS = "G:\\"         # the photo disk(s) scanned, ';'-separated (--source)
+```
+
+Junctions need no administrator rights.
+
+---
+
+## Quick start
+
+Close Capture One before any `--apply`.
 
 ```
-python c1_cache_link.py status                          # what is linked where; writes the map
-python c1_cache_link.py link                            # G:\ caches -> E:\C1_Cache (moved)
-python c1_cache_link.py link --discard                  # same, old thumbnails dropped (rebuilt on demand)
-python c1_cache_link.py move --to D:\C1_Cache           # new fast disk: caches moved, junctions repointed
-python c1_cache_link.py move --to D:\C1_Cache --discard # same without moving the thumbnails
-python c1_cache_link.py move --to C:\C1_Cache           # repair: targets that are gone come back empty
-python c1_cache_link.py unlink                          # caches back next to the photos
-python c1_cache_link.py unlink --discard                # junctions removed, empty Cache folders back
+python c1_cache_link.py status                  # every CaptureOne folder, where its cache lives, the plan
+python c1_cache_link.py link                    # dry run: what would move where
+python c1_cache_link.py link --apply            # do it: caches moved to the SSD, junctions created
+python c1_cache_link.py link --apply --discard  # same, old thumbnails dropped (rebuilt on demand)
 ```
 
-`--source "G:\2025;G:\2026"` limits a run to some folders. Defaults
-(`CACHE_ROOT`, `RULES_FILE`, `SOURCE_ROOTS`, the margin, the folder names) are
-the settings at the top of the script.
+Run `link` again now and then: a folder Capture One opens for the first time gets a real `Cache` beside the photos.
+
+Other commands:
+
+```
+python c1_cache_link.py move --to D:\C1_Cache   # no rules file: every junction repointed, caches moved along
+python c1_cache_link.py move --to E:\C1_Cache   # the same root: a lost SSD comes back with empty caches
+python c1_cache_link.py unlink --apply          # everything back beside the photos, junctions removed
+```
+
+`--source "G:\2025;G:\2026"` limits a run to some folders.
+
+---
 
 ## Rules
 
-Each Capture One folder can send its cache to a different place. Put the rules
-in `c1_cache_rules.toml` next to the script (or pass `--rules PATH`); start from
-`c1_cache_rules.example.toml`:
+Put them in `c1_cache_rules.toml` next to the script (or pass `--rules PATH`); start from [`c1_cache_rules.example.toml`](c1_cache_rules.example.toml). Without a rules file every cache goes to `CACHE_ROOT`.
 
 ```toml
-default = 'E:\C1_Cache'        # where every cache goes unless a rule says otherwise ("none" = beside the photos)
+default = 'E:\C1_Cache'        # every cache no rule matches ("none" = beside the photos)
 
 [[path]]
 source = 'G:\2018'             # everything below G:\2018 ...
 to = 'F:\C1_Cache'             # ... goes to F:
 
 [[name]]
-name = "OUTTAKES"              # any folder called OUTTAKES, wherever it is ...
+name = "OUTTAKES"              # any folder called OUTTAKES, at any depth ...
 to = "none"                    # ... keeps a real Cache beside its photos
 ```
 
-- **Precedence**: a name rule beats every path rule; among path rules the
-  longest matching source wins (the order in the file does not matter);
-  otherwise the default. Among name rules the one closest to the `CaptureOne`
-  folder wins.
-- **"none"** (any case) means Capture One's own default: a real `Cache` folder
-  beside the photos, no junction.
-- **No rules file**: every cache goes to `CACHE_ROOT` (or `--to`), as before.
-  With a rules file, `--to` overrides its `default`.
-- **Changing rules**: edit the file and run `link`. `link` moves only the caches
-  whose target differs from the rules (a cache a rule now sends to "none" comes
-  back beside the photos). `move --to` ignores the rules; a note says so.
-- **Dry run first**: `link` (without `--apply`) prints a PLAN table: per
-  destination, how many folders are already in place and how many would be
-  linked, moved, repaired or unlinked, with the GB. `status` prints the same table.
-- **Space** is checked per drive: each drive needs its share plus
-  `SPACE_MARGIN_GB`.
-- A malformed rules file (unknown key, relative path, duplicate source or name,
-  bad TOML) is reported with its file name, and nothing changes.
+- **Precedence:** a name rule beats every path rule (the name closest to the `CaptureOne` folder wins); among path rules the longest source wins, whatever the order in the file; otherwise `default`.
+- **`"none"`** means Capture One's own default: a real `Cache` folder beside the photos, no junction.
+- **Changing your mind:** edit the file, run `link` to see the plan, then `link --apply`. Only the caches whose place changed are moved; a cache a rule now sends to `"none"` comes back beside the photos.
+- **New SSD:** change `default` (or a `to`) and run `link` — with a rules file, that replaces `move --to`.
+- A malformed file (unknown key, relative path, duplicate source or name, bad TOML) is reported with its name, and nothing changes.
 
-- **Space**: moving refuses before the first byte when the destination lacks
-  the cache size plus `SPACE_MARGIN_GB`. `--discard` needs no space.
-- **The map** (`_c1_cache_map.tsv` in the cache root, plus `~/.c1_cache_map.tsv`)
-  lists every cache folder, its state and where it lives. The junctions
-  themselves are the working record: `move` finds them by scanning, so a lost
-  fast disk is repaired from the photo disk alone.
-- **Interrupted run**: the next `link`/`move`/`unlink` puts a set-aside Cache
-  back or deletes the leftover (it only ever holds cache).
-- **New folders**: Capture One creates a real `Cache` in a folder it opens for
-  the first time; run `link` again now and then.
-- **Backups of the photo disk**: tell the backup tool not to follow junctions,
-  or it copies the cache from the fast disk as if it lived there.
-- Only a folder named `Cache` directly inside a `CaptureOne` folder is ever
-  deleted, and only after its contents were copied and checked (or with
-  `--discard`).
+---
 
-Tests: `python -m pytest tests -q` (hostile paths: Japanese, `[ ]`, spaces,
-`%`, a path past 260 characters, a junction across drives when `E:\temp_jxl`
-exists).
+## Good to know
+
+- **Backups of the photo disk:** tell the backup tool not to follow junctions (in FreeFileSync, *Symbolic links: Exclude*), or it copies the cache from the SSD as if it lived there. Caches left beside the photos by a `"none"` rule are ordinary folders and are backed up; exclude `*\CaptureOne\Cache\` if you do not want them.
+- **A lost or wiped SSD:** Capture One shows empty folders until the junctions point somewhere; `status` lists them as *link whose target is gone*, and `link` (or `move --to` the same root) recreates them empty. The edits were never on the SSD.
+- **The junctions are the record**, not the map: every command finds them by scanning the photo disk, so it works even when the map is gone.
+- **Layout on the SSD:** `<cache root>\<drive letter>\<same path as the photos>`, so a cache is easy to find by hand.
+- **Interrupted run** (power cut, Ctrl+C): the next `link`/`move`/`unlink` puts a set-aside `Cache` back or deletes the leftover copy.
+- **Same disk:** a cache root on the same disk as the photos is allowed but gains nothing; a note says so.
+
+---
+
+## What's new in v0.2.0
+
+- **Rules** (`c1_cache_rules.toml`): a default, path rules and folder-name rules, each to a cache root or to `"none"` (beside the photos).
+- **`link` reconciles** every folder with the rules: links new ones, moves those whose rule changed, repairs gone targets, brings back those sent to `"none"`.
+- **Plan table** in `status` and in the `link` dry run; **free space checked per disk**; the map gains a `rule` column.
+- Output never crashes on a name the console cannot print (Windows pipes).
+
+v0.1.0 (2026-11-08): first release — one cache root, `status` / `link` / `move` / `unlink`.
+
+---
+
+## Tests
+
+```
+python -m pytest tests -q
+```
+
+47 tests, all in temporary folders: hostile names (Japanese, `[ ]`, spaces, `%`), a path past 260 characters, interrupted and failed copies rolled back, the refusal while Capture One runs and without space, a full cycle of rule changes with the cache files checked by hash, and a junction across drives when `E:\temp_jxl` exists.
+
+---
+
+## About this project
+
+I wrote this for my own library: an 18 TB hard disk of photos with a `CaptureOne` folder beside every folder of photos, and an SSD that could never hold the photos but easily holds the cache of what I am working on. Related projects, all mine:
+
+- [jxl-photo](https://github.com/rsilvabr/jxl-photo) — JPEG XL archiving of Capture One exports, with ICC and EXIF preserved.
+- [photo-backup](https://github.com/rsilvabr/photo-backup) — backs up the masters, the originals and the edits.
+- [tiff-workflow](https://github.com/rsilvabr/tiff-workflow) — lossless TIFF recompression.
+
+---
+
+## Disclaimer
+
+Made for my personal workflow. Use at your own risk — I am not responsible for any issues you may encounter. If you find a bug, feel free to report it.
+
+Run `status` and a dry run first, and try it on one `--source` folder before the whole disk.
+
+---
+
+## License
+
+MIT License — feel free to use, modify, and distribute.
+
+---
+
+## Acknowledgments
+
+- [Claude](https://www.anthropic.com/claude) (Anthropic), among other AI tools, for code assistance, reviews and technical discussion
