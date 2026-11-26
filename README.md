@@ -1,6 +1,6 @@
 # c1-cache-link — Capture One caches on a fast disk
 
-Keeps Capture One's **`Cache` folders** (thumbnails `.cot`, previews `.cof`/`.cop`) on a fast SSD while the **edits stay next to the photos** on the big, slow disk. Each `...\CaptureOne\Cache` becomes an NTFS junction to the SSD; Capture One sees an ordinary folder and never knows. Rules decide which folders get the fast disk: by default all of them, but, for example, every `OUTTAKES` folder can keep its cache beside the photos.
+Keeps Capture One's **`Cache` folders** (thumbnails `.cot`, previews `.cof`/`.cop`) on a fast SSD while the **edits stay next to the photos** on the big, slow disk. Each `...\CaptureOne\Cache` becomes an NTFS junction to the SSD; Capture One sees an ordinary folder and never knows. **Dry run by default, nothing deleted before its copy is checked, refuses while Capture One runs.** Rules decide which folders get the fast disk: by default all of them, but, for example, every `OUTTAKES` folder can keep its cache beside the photos.
 
 **Current version: v0.2.0** (2026-11-26) · [What's new](#whats-new-in-v020) · Windows only · one Python file, no dependencies
 
@@ -19,12 +19,8 @@ Capture One writes a `CaptureOne` folder beside every folder of photos it opens:
 
 ## Features
 
-- **Dry run by default** — every command first prints what it would do; nothing changes without `--apply`.
 - **Rules** — a default location, path rules (everything below `G:\2018` → another disk) and folder-name rules (`OUTTAKES` → beside the photos). One `link` reconciles every folder with the rules and moves only what differs.
 - **A plan before you commit** — per destination: folders already in place, and how many would be linked, moved, repaired or brought back, with the GB.
-- **Safe moves** — the cache is copied and checked before the old copy is deleted; an interrupted run is cleaned up by the next one; only a folder named `Cache` directly inside a `CaptureOne` folder is ever deleted.
-- **Space checked per disk** before the first byte is copied, with a margin.
-- **Refuses while Capture One runs.**
 - **A readable map** (`_c1_cache_map.tsv`) of every cache folder, where it lives and which rule chose it.
 - **Hostile paths** — Japanese names, `[ ]`, spaces, `%`, paths past 260 characters, junctions across drives.
 
@@ -92,6 +88,19 @@ to = "none"                    # ... keeps a real Cache beside its photos
 
 ---
 
+## Safety guarantees
+
+One line each.
+
+- **Nothing changes without `--apply`.** Every command first prints what it would do.
+- **The edits are never touched.** Only a folder named `Cache` directly inside a `CaptureOne` folder is moved or deleted; `Settings*` and the photos stay where they are.
+- **A cache is deleted only after its copy is complete and checked** (every file there, same size), or with `--discard` when you asked for it. A copy is made under a temporary name and renamed only when finished.
+- **Fail closed.** Not enough space on any destination disk, Capture One running, a malformed rules file: the run stops before the first byte is copied, exit 2.
+- **A failed folder is put back as it was**, and the run goes on with the next one; an interrupted run is cleaned up by the next one.
+- **Nothing is skipped silently.** A `Cache` that is a file is counted in the summary and left alone; a folder that cannot be read is listed and makes the run exit 1.
+
+---
+
 ## Good to know
 
 - **Backups of the photo disk:** tell the backup tool not to follow junctions (in FreeFileSync, *Symbolic links: Exclude*), or it copies the cache from the SSD as if it lived there. Caches left beside the photos by a `"none"` rule are ordinary folders and are backed up; exclude `*\CaptureOne\Cache\` if you do not want them.
@@ -124,21 +133,24 @@ python -m pytest tests -q
 
 ---
 
-## About this project
+## Related projects
 
-I wrote this for my own library: an 18 TB hard disk of photos with a `CaptureOne` folder beside every folder of photos, and an SSD that could never hold the photos but easily holds the cache of what I am working on. Related projects, all mine:
+All mine:
 
-- [jxl-photo](https://github.com/rsilvabr/jxl-photo) — JPEG XL archiving of Capture One exports, with ICC and EXIF preserved.
-- [photo-backup](https://github.com/rsilvabr/photo-backup) — backs up the masters, the originals and the edits.
-- [tiff-workflow](https://github.com/rsilvabr/tiff-workflow) — lossless TIFF recompression.
+- [photo-backup](https://github.com/rsilvabr/photo-backup) — selective backup of a photo archive: the exported photos with their originals and their Capture One edits. It skips Capture One's `Cache` folders by default, so the two work together: the edits are backed up, the cache is not.
+- [jxl-photo](https://github.com/rsilvabr/jxl-photo) — TIFF and JPEG to JPEG XL and back, for photographers: JXL masters with the ICC profile and metadata.
+- [tiff-workflow](https://github.com/rsilvabr/tiff-workflow) — lossless TIFF recompression, no libjxl needed.
 
 ---
 
 ## Disclaimer
 
-Made for my personal workflow. Use at your own risk — I am not responsible for any issues you may encounter. If you find a bug, feel free to report it.
+This tool was made for my personal workflow.
+Use at your own risk — I am not responsible for any issues you may encounter.
 
-Run `status` and a dry run first, and try it on one `--source` folder before the whole disk.
+However, if you find any bugs, feel free to report them to me — I will gladly try my best to improve this project.
+
+Always start with `status` and a dry run, and try one `--source` folder before the whole disk.
 
 ---
 
